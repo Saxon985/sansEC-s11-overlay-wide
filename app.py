@@ -24,33 +24,11 @@ DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # -------------------------------------------------
-# Helper functions
+# Helper: extract temperature from filename
 # -------------------------------------------------
 def extract_temperature(filename):
     match = re.search(r"[-+]?\d*\.\d+|\d+", filename)
     return float(match.group()) if match else 0.0
-
-def load_and_analyze(files):
-    FREQ_MIN, FREQ_MAX = 80e6, 100e6
-    temps, res_freqs, min_s11s = [], [], []
-    
-    for file in files:
-        temp = extract_temperature(os.path.basename(file))
-        try:
-            data = np.loadtxt(file, skiprows=1)
-            freq, real, imag = data[:, 0], data[:, 1], data[:, 2]
-            mask = (freq >= FREQ_MIN) & (freq <= FREQ_MAX)
-            if not np.any(mask):
-                continue
-            s11_db = 20 * np.log10(np.sqrt(real[mask]**2 + imag[mask]**2))
-            min_idx = np.argmin(s11_db)
-            temps.append(temp)
-            res_freqs.append(freq[mask][min_idx] / 1e6)
-            min_s11s.append(s11_db[min_idx])
-        except:
-            continue
-    
-    return np.array(temps), np.array(res_freqs), np.array(min_s11s)
 
 # -------------------------------------------------
 # File uploader
@@ -69,7 +47,7 @@ if uploaded_files:
         st.success(f"Saved: {uploaded_file.name}")
 
 # -------------------------------------------------
-# Load files
+# Load all .s1p files
 # -------------------------------------------------
 files = sorted(
     glob.glob(os.path.join(DATA_DIR, "*.s1p")),
@@ -83,90 +61,165 @@ if len(files) == 0:
     st.stop()
 
 # -------------------------------------------------
-# Extract features (80–100 MHz window)
+# Build file info table + extract 80-100 MHz features
 # -------------------------------------------------
-temps, res_freqs, min_s11s = load_and_analyze(files)
+FREQ_MIN, FREQ_MAX = 80e6, 100e6
 
-if len(temps) == 0:
-    st.warning("No valid data found in the 80–100 MHz window.")
-    st.stop()
+file_info = []
+temps_list = []
+res_freqs_list = []
+min_s11_list = []
 
-# Sort
-idx = np.argsort(temps)
-temps, res_freqs, min_s11s = temps[idx], res_freqs[idx], min_s11s[idx]
+for file in files:
+    temp = extract_temperature(os.path.basename(file))
+    try:
+        data = np.loadtxt(file, skiprows=1)
+        freq = data[:, 0]
+        real = data[:, 1]
+        imag = data[:, 2]
+        
+        # Full curve for overlay plot
+        s11_full = 20 * np.log10(np.sqrt(real**2 + imag**2))
+        
+        # Restricted window for temperature analysis
+        mask = (freq >= FREQ_MIN) & (freq <= FREQ_MAX)
+        if np.any(mask):
+            s11_win = 20 * np.log10(np.sqrt(real[mask]**2 + imag[mask]**2))
+            min_idx = np.argmin(s11_win)
+            res_freq = freq[mask][min_idx] / 1e6
+            min_s11 = s11_win[min_idx]
+        else:
+            res_freq = None
+            min_s11 = None
+            
+        file_info.append({
+            "Filename": os.path.basename(file),
+            "Temperature (°C)": temp,
+            "Resonant Freq (MHz)": round(res_freq, 4) if res_freq is not None else "N/A",
+            "Min S11 (dB)": round(min_s11, 3) if min_s11 is not None else "N/A"
+        })
+        
+        if res_freq is not None:
+            temps_list.append(temp)
+            res_freqs_list.append(res_freq)
+            min_s11_list.append(min_s11)
+            
+    except Exception as e:
+        file_info.append({
+            "Filename": os.path.basename(file),
+            "Temperature (°C)": temp,
+            "Resonant Freq (MHz)": "Error",
+            "Min S11 (dB)": "Error"
+        })
 
 # -------------------------------------------------
-# Table of results
+# File table + Delete
 # -------------------------------------------------
-df = pd.DataFrame({
-    "Filename": [os.path.basename(f) for f in files],
-    "Temperature (°C)": [extract_temperature(os.path.basename(f)) for f in files]
-})
-# Re-order df to match sorted temps if needed – simplified for now
+df = pd.DataFrame(file_info)
 st.subheader("File Summary")
 st.dataframe(df, use_container_width=True)
 
-# -------------------------------------------------
-# Fit cubic to depth
-# -------------------------------------------------
-X = temps.reshape(-1, 1)
-poly = PolynomialFeatures(3)
-X_poly = poly.fit_transform(X)
-depth_model = LinearRegression().fit(X_poly, min_s11s)
-depth_r2 = depth_model.score(X_poly, min_s11s)
-
-coefs = depth_model.coef_
-intercept = depth_model.intercept_
+st.subheader("Delete files")
+files_to_delete = st.multiselect("Select files to delete", options=df["Filename"].tolist())
+if st.button("Delete selected files") and files_to_delete:
+    for fname in files_to_delete:
+        os.remove(os.path.join(DATA_DIR, fname))
+    st.success(f"Deleted: {', '.join(files_to_delete)}")
+    st.rerun()
 
 # -------------------------------------------------
-# Display the equation
+# 1. Original S11 vs Frequency Overlay Plot
 # -------------------------------------------------
-st.subheader("Cubic Equation – Resonance Depth vs Temperature")
+st.subheader("S11 Magnitude vs Frequency Overlay")
 
-eq_text = (
-    f"S11_min(T) = {intercept:.4f} + ({coefs[1]:.6f})*T "
-    f"+ ({coefs[2]:.6e})*T² + ({coefs[3]:.6e})*T³"
-)
-st.code(eq_text, language="text")
+fig1, ax1 = plt.subplots(figsize=(12, 6))
 
-st.write(f"**R² = {depth_r2:.4f}**  |  Valid range: {temps.min():.1f} °C – {temps.max():.1f} °C")
-st.caption("Note: Resonant frequency remains essentially constant (~99.2–99.3 MHz) across this temperature range.")
+temps_for_color = [extract_temperature(os.path.basename(f)) for f in files]
+cmap = plt.cm.plasma
+norm = Normalize(vmin=min(temps_for_color), vmax=max(temps_for_color))
+
+for file in files:
+    temp = extract_temperature(os.path.basename(file))
+    data = np.loadtxt(file, skiprows=1)
+    freq_mhz = data[:, 0] / 1e6
+    s11_db = 20 * np.log10(np.sqrt(data[:,1]**2 + data[:,2]**2))
+    ax1.plot(freq_mhz, s11_db, color=cmap(norm(temp)), linewidth=0.8, alpha=0.85)
+
+sm = ScalarMappable(cmap=cmap, norm=norm)
+sm.set_array([])
+cbar = plt.colorbar(sm, ax=ax1)
+cbar.set_label("Temperature (°C)")
+
+ax1.set_xlabel("Frequency (MHz)")
+ax1.set_ylabel("S11 Magnitude (dB)")
+ax1.set_title("S11 Magnitude vs Frequency (All files)")
+ax1.grid(True, alpha=0.3)
+st.pyplot(fig1)
 
 # -------------------------------------------------
-# Plots
+# 2. Temperature Analysis (80–100 MHz window)
 # -------------------------------------------------
-st.subheader("Plots (80–100 MHz window)")
-
-fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-T_smooth = np.linspace(temps.min(), temps.max(), 300).reshape(-1, 1)
-
-# Frequency plot
-axes[0].scatter(temps, res_freqs, color='steelblue', s=40, zorder=3)
-axes[0].set_xlabel("Temperature (°C)")
-axes[0].set_ylabel("Resonant Frequency (MHz)")
-axes[0].set_title("Resonant Frequency vs Temperature")
-axes[0].grid(True, alpha=0.3)
-
-# Depth plot + fit
-axes[1].scatter(temps, min_s11s, color='darkorange', s=40, label='Data', zorder=3)
-axes[1].plot(T_smooth, depth_model.predict(poly.transform(T_smooth)),
-             color='black', linewidth=2, label=f'Cubic fit (R²={depth_r2:.3f})')
-axes[1].set_xlabel("Temperature (°C)")
-axes[1].set_ylabel("Minimum S11 (dB)")
-axes[1].set_title("Resonance Depth vs Temperature")
-axes[1].legend()
-axes[1].grid(True, alpha=0.3)
-
-plt.tight_layout()
-st.pyplot(fig)
-
-# Download button for the figure
-buf = BytesIO()
-fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-st.download_button(
-    label="Download plots as PNG",
-    data=buf.getvalue(),
-    file_name="depth_and_frequency_vs_temperature.png",
-    mime="image/png"
-)
+if len(temps_list) > 5:
+    temps = np.array(temps_list)
+    res_freqs = np.array(res_freqs_list)
+    min_s11s = np.array(min_s11_list)
+    
+    # Sort
+    sort_idx = np.argsort(temps)
+    temps = temps[sort_idx]
+    res_freqs = res_freqs[sort_idx]
+    min_s11s = min_s11s[sort_idx]
+    
+    # Fit cubic to depth
+    X = temps.reshape(-1, 1)
+    poly = PolynomialFeatures(3)
+    X_poly = poly.fit_transform(X)
+    depth_model = LinearRegression().fit(X_poly, min_s11s)
+    depth_r2 = depth_model.score(X_poly, min_s11s)
+    coefs = depth_model.coef_
+    intercept = depth_model.intercept_
+    
+    st.subheader("Cubic Equation – Resonance Depth vs Temperature (80–100 MHz)")
+    eq_text = (f"S11_min(T) = {intercept:.4f} + ({coefs[1]:.6f})*T + "
+               f"({coefs[2]:.6e})*T² + ({coefs[3]:.6e})*T³")
+    st.code(eq_text, language="text")
+    st.write(f"**R² = {depth_r2:.4f}**  |  Temperature range: {temps.min():.1f} °C – {temps.max():.1f} °C")
+    st.caption("Note: Resonant frequency remains essentially constant across this temperature range.")
+    
+    # Side-by-side temperature plots
+    st.subheader("Temperature Dependence (80–100 MHz window)")
+    fig2, axes = plt.subplots(1, 2, figsize=(14, 5))
+    
+    T_smooth = np.linspace(temps.min(), temps.max(), 300).reshape(-1, 1)
+    
+    # Frequency plot
+    axes[0].scatter(temps, res_freqs, color='steelblue', s=40, zorder=3)
+    axes[0].set_xlabel("Temperature (°C)")
+    axes[0].set_ylabel("Resonant Frequency (MHz)")
+    axes[0].set_title("Resonant Frequency vs Temperature")
+    axes[0].grid(True, alpha=0.3)
+    
+    # Depth plot + fit
+    axes[1].scatter(temps, min_s11s, color='darkorange', s=40, label='Data', zorder=3)
+    axes[1].plot(T_smooth, depth_model.predict(poly.transform(T_smooth)),
+                 color='black', linewidth=2, label=f'Cubic fit (R²={depth_r2:.3f})')
+    axes[1].set_xlabel("Temperature (°C)")
+    axes[1].set_ylabel("Minimum S11 (dB)")
+    axes[1].set_title("Resonance Depth vs Temperature")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    st.pyplot(fig2)
+    
+    # Download button
+    buf = BytesIO()
+    fig2.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    st.download_button(
+        label="Download temperature analysis plots as PNG",
+        data=buf.getvalue(),
+        file_name="temperature_analysis.png",
+        mime="image/png"
+    )
+else:
+    st.info("Not enough valid files in the 80–100 MHz window to perform temperature analysis.")
