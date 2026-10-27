@@ -122,9 +122,13 @@ intercept = depth_model.intercept_
 # Display the equation
 # -------------------------------------------------
 st.subheader("Cubic Equation – Resonance Depth vs Temperature")
-st.latex(r"""
-S_{11,\min}(T) = {:.4f} + ({:.6f})T + ({:.6e})T^2 + ({:.6e})T^3
-""".format(intercept, coefs[1], coefs[2], coefs[3]))
+
+eq_text = (
+    f"S11_min(T) = {intercept:.4f} + ({coefs[1]:.6f})*T "
+    f"+ ({coefs[2]:.6e})*T² + ({coefs[3]:.6e})*T³"
+)
+st.code(eq_text, language="text")
+
 st.write(f"**R² = {depth_r2:.4f}**  |  Valid range: {temps.min():.1f} °C – {temps.max():.1f} °C")
 st.caption("Note: Resonant frequency remains essentially constant (~99.2–99.3 MHz) across this temperature range.")
 
