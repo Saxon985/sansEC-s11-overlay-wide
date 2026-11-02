@@ -20,7 +20,7 @@ st.title("SansEC S11 Overlay (Wide Sweep: 20 – 200 MHz)")
 # -------------------------------------------------
 # Ensure data folder exists
 # -------------------------------------------------
-DATA_DIR = "data"
+DATA_DIR = "SansEC Temperature Data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # -------------------------------------------------
