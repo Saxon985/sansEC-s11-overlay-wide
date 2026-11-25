@@ -16,47 +16,31 @@ from sklearn.linear_model import LinearRegression
 # Page settings
 # -------------------------------------------------
 st.set_page_config(page_title="SansEC S11 Overlay", layout="wide")
-st.title("SansEC S11 Overlay (Wide Sweep: 20 – 200 MHz)")
+st.title("SansEC S11 Overlay (Temperature & Humidity Analysis)")
 
 # -------------------------------------------------
 # Data folder
 # -------------------------------------------------
-DATA_DIR = "SansEC Data"   # you can rename this later if you want
+DATA_DIR = "SansEC Data"   
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # -------------------------------------------------
-# Helper: extract value from filename or folder path
+# Helper: extract value and category (Temp vs Humidity)
 # -------------------------------------------------
-def extract_value(file_path):
-    """
-    Handles extracting values and detecting data types from either 
-    the filename or parent directory path (e.g., nested test folders).
-    """
-    path_str = str(file_path)
+def extract_value_and_category(file_path):
+    path_str = str(file_path).lower()
     name = os.path.basename(file_path)
     
-    # Check for humidity indicators in path or name
-    is_hum_context = "hum" in path_str.lower() or "%" in path_str
+    # Check if humidity based on folder name or filename
+    is_humidity = "hum" in path_str or "%" in path_str
     
-    # Try to find a number followed by %
-    match = re.search(r"([-+]?\d*\.?\d+)\s*%", path_str)
-    if match:
-        return float(match.group(1)), "Humidity (%)"
-    
-    if is_hum_context:
-        match = re.search(r"([-+]?\d*\.?\d+)", name)
-        if match:
-            return float(match.group(1)), "Humidity (%)"
-
-    # Try to find temperature or general number
     match = re.search(r"([-+]?\d*\.?\d+)", name)
-    if match:
-        val = float(match.group(1))
-        if is_hum_context:
-            return val, "Humidity (%)"
-        return val, "Temperature (°C)"
+    val = float(match.group(1)) if match else 0.0
     
-    return 0.0, "Unknown"
+    if is_humidity:
+        return val, "Humidity (%)", "Humidity"
+    else:
+        return val, "Temperature (°C)", "Temperature"
 
 # -------------------------------------------------
 # File / ZIP Uploader
@@ -81,86 +65,142 @@ if uploaded_files:
             st.success(f"Saved: {uploaded_file.name}")
 
 # -------------------------------------------------
-# Load all .s1p files recursively from subfolders
+# Load all .s1p files recursively and sort them
 # -------------------------------------------------
-files = sorted(
+all_files = sorted(
     glob.glob(os.path.join(DATA_DIR, "**", "*.s1p"), recursive=True),
-    key=lambda x: extract_value(x)[0]
+    key=lambda x: extract_value_and_category(x)[0]
 )
 
-st.write(f"Currently stored files: **{len(files)}**")
+st.write(f"Total stored files found: **{len(all_files)}**")
 
-if len(files) == 0:
+if len(all_files) == 0:
     st.info("No .s1p files found yet. Upload your data folders or a .zip archive to get started.")
     st.stop()
 
-# -------------------------------------------------
-# Detect data type (Temperature or Humidity)
-# -------------------------------------------------
-_, first_unit = extract_value(files[0])
-is_humidity = "Humidity" in first_unit
-unit_label = first_unit
-x_axis_label = unit_label
+# Split into temperature and humidity file lists
+temp_files = [f for f in all_files if extract_value_and_category(f)[2] == "Temperature"]
+hum_files = [f for f in all_files if extract_value_and_category(f)[2] == "Humidity"]
 
-# -------------------------------------------------
-# Build file info table + extract 80-100 MHz features
-# -------------------------------------------------
 FREQ_MIN, FREQ_MAX = 80e6, 100e6
 
-file_info = []
-values_list = []
-res_freqs_list = []
-min_s11_list = []
+# -------------------------------------------------
+# Process Dataset Function
+# -------------------------------------------------
+def process_dataset(file_list, unit_label):
+    file_info = []
+    values_list = []
+    res_freqs_list = []
+    min_s11_list = []
 
-for file in files:
-    value, _ = extract_value(file)
-    rel_path = os.path.relpath(file, DATA_DIR)
-    try:
+    for file in file_list:
+        val, _, _ = extract_value_and_category(file)
+        rel_path = os.path.relpath(file, DATA_DIR)
+        try:
+            data = np.loadtxt(file, skiprows=1)
+            freq = data[:, 0]
+            real = data[:, 1]
+            imag = data[:, 2]
+
+            mask = (freq >= FREQ_MIN) & (freq <= FREQ_MAX)
+            if np.any(mask):
+                s11_win = 20 * np.log10(np.sqrt(real[mask]**2 + imag[mask]**2))
+                min_idx = np.argmin(s11_win)
+                res_freq = freq[mask][min_idx] / 1e6
+                min_s11 = s11_win[min_idx]
+            else:
+                res_freq, min_s11 = None, None
+
+            file_info.append({
+                "File Path": rel_path,
+                unit_label: val,
+                "Resonant Freq (MHz)": round(res_freq, 4) if res_freq is not None else "N/A",
+                "Min S11 (dB)": round(min_s11, 3) if min_s11 is not None else "N/A"
+            })
+
+            if res_freq is not None:
+                values_list.append(val)
+                res_freqs_list.append(res_freq)
+                min_s11_list.append(min_s11)
+        except Exception:
+            file_info.append({
+                "File Path": rel_path,
+                unit_label: val,
+                "Resonant Freq (MHz)": "Error",
+                "Min S11 (dB)": "Error"
+            })
+    return pd.DataFrame(file_info), values_list, res_freqs_list, min_s11_list
+
+# =================================================
+# TEMPERATURE SECTION
+# =================================================
+if len(temp_files) > 0:
+    st.header("🌡️ Temperature Data Analysis")
+    df_temp, t_vals, t_freqs, t_s11s = process_dataset(temp_files, "Temperature (°C)")
+    st.dataframe(df_temp, use_container_width=True)
+
+    # Plot 1: Temperature S11 Overlay (Plasma Colormap)
+    st.subheader("S11 Magnitude vs Frequency Overlay (Temperature)")
+    fig_t, ax_t = plt.subplots(figsize=(12, 6))
+    t_colors = [extract_value_and_category(f)[0] for f in temp_files]
+    cmap_t = plt.cm.plasma
+    norm_t = Normalize(vmin=min(t_colors), vmax=max(t_colors))
+
+    for file in temp_files:
+        val, _, _ = extract_value_and_category(file)
         data = np.loadtxt(file, skiprows=1)
-        freq = data[:, 0]
-        real = data[:, 1]
-        imag = data[:, 2]
+        ax_t.plot(data[:, 0] / 1e6, 20 * np.log10(np.sqrt(data[:,1]**2 + data[:,2]**2)),
+                  color=cmap_t(norm_t(val)), linewidth=0.8, alpha=0.85)
 
-        # Restricted window for analysis
-        mask = (freq >= FREQ_MIN) & (freq <= FREQ_MAX)
-        if np.any(mask):
-            s11_win = 20 * np.log10(np.sqrt(real[mask]**2 + imag[mask]**2))
-            min_idx = np.argmin(s11_win)
-            res_freq = freq[mask][min_idx] / 1e6
-            min_s11 = s11_win[min_idx]
-        else:
-            res_freq = None
-            min_s11 = None
+    sm_t = ScalarMappable(cmap=cmap_t, norm=norm_t)
+    sm_t.set_array([])
+    cbar_t = plt.colorbar(sm_t, ax=ax_t)
+    cbar_t.set_label("Temperature (°C)")
 
-        file_info.append({
-            "File Path": rel_path,
-            unit_label: value,
-            "Resonant Freq (MHz)": round(res_freq, 4) if res_freq is not None else "N/A",
-            "Min S11 (dB)": round(min_s11, 3) if min_s11 is not None else "N/A"
-        })
+    ax_t.set_xlabel("Frequency (MHz)")
+    ax_t.set_ylabel("S11 Magnitude (dB)")
+    ax_t.set_title("S11 Magnitude vs Frequency (Colored by Temperature)")
+    ax_t.grid(True, alpha=0.3)
+    st.pyplot(fig_t)
 
-        if res_freq is not None:
-            values_list.append(value)
-            res_freqs_list.append(res_freq)
-            min_s11_list.append(min_s11)
+# =================================================
+# HUMIDITY SECTION
+# =================================================
+if len(hum_files) > 0:
+    st.header("💧 Humidity Data Analysis")
+    df_hum, h_vals, h_freqs, h_s11s = process_dataset(hum_files, "Humidity (%)")
+    st.dataframe(df_hum, use_container_width=True)
 
-    except Exception:
-        file_info.append({
-            "File Path": rel_path,
-            unit_label: value,
-            "Resonant Freq (MHz)": "Error",
-            "Min S11 (dB)": "Error"
-        })
+    # Plot 2: Humidity S11 Overlay (Viridis Colormap)
+    st.subheader("S11 Magnitude vs Frequency Overlay (Humidity)")
+    fig_h, ax_h = plt.subplots(figsize=(12, 6))
+    h_colors = [extract_value_and_category(f)[0] for f in hum_files]
+    cmap_h = plt.cm.viridis
+    norm_h = Normalize(vmin=min(h_colors), vmax=max(h_colors))
+
+    for file in hum_files:
+        val, _, _ = extract_value_and_category(file)
+        data = np.loadtxt(file, skiprows=1)
+        ax_h.plot(data[:, 0] / 1e6, 20 * np.log10(np.sqrt(data[:,1]**2 + data[:,2]**2)),
+                  color=cmap_h(norm_h(val)), linewidth=0.8, alpha=0.85)
+
+    sm_h = ScalarMappable(cmap=cmap_h, norm=norm_h)
+    sm_h.set_array([])
+    cbar_h = plt.colorbar(sm_h, ax=ax_h)
+    cbar_h.set_label("Humidity (%)")
+
+    ax_h.set_xlabel("Frequency (MHz)")
+    ax_h.set_ylabel("S11 Magnitude (dB)")
+    ax_h.set_title("S11 Magnitude vs Frequency (Colored by Humidity)")
+    ax_h.grid(True, alpha=0.3)
+    st.pyplot(fig_h)
 
 # -------------------------------------------------
-# File table + Delete
+# Delete Files Section
 # -------------------------------------------------
-df = pd.DataFrame(file_info)
-st.subheader("File Summary")
-st.dataframe(df, use_container_width=True)
-
-st.subheader("Delete files")
-files_to_delete = st.multiselect("Select files to delete", options=df["File Path"].tolist())
+st.subheader("Manage Files")
+all_paths = [os.path.relpath(f, DATA_DIR) for f in all_files]
+files_to_delete = st.multiselect("Select files to delete", options=all_paths)
 if st.button("Delete selected files") and files_to_delete:
     for fpath in files_to_delete:
         full_path = os.path.join(DATA_DIR, fpath)
@@ -168,99 +208,3 @@ if st.button("Delete selected files") and files_to_delete:
             os.remove(full_path)
     st.success(f"Deleted: {', '.join(files_to_delete)}")
     st.rerun()
-
-# -------------------------------------------------
-# 1. S11 vs Frequency Overlay Plot
-# -------------------------------------------------
-st.subheader("S11 Magnitude vs Frequency Overlay")
-
-fig1, ax1 = plt.subplots(figsize=(12, 6))
-
-values_for_color = [extract_value(f)[0] for f in files]
-cmap = plt.cm.plasma
-norm = Normalize(vmin=min(values_for_color), vmax=max(values_for_color))
-
-for file in files:
-    value, _ = extract_value(file)
-    data = np.loadtxt(file, skiprows=1)
-    freq_mhz = data[:, 0] / 1e6
-    s11_db = 20 * np.log10(np.sqrt(data[:,1]**2 + data[:,2]**2))
-    ax1.plot(freq_mhz, s11_db, color=cmap(norm(value)), linewidth=0.8, alpha=0.85)
-
-sm = ScalarMappable(cmap=cmap, norm=norm)
-sm.set_array([])
-cbar = plt.colorbar(sm, ax=ax1)
-cbar.set_label(unit_label)
-
-ax1.set_xlabel("Frequency (MHz)")
-ax1.set_ylabel("S11 Magnitude (dB)")
-ax1.set_title(f"S11 Magnitude vs Frequency (colored by {unit_label})")
-ax1.grid(True, alpha=0.3)
-st.pyplot(fig1)
-
-# -------------------------------------------------
-# 2. Analysis plots (80–100 MHz window)
-# -------------------------------------------------
-if len(values_list) > 5:
-    values = np.array(values_list)
-    res_freqs = np.array(res_freqs_list)
-    min_s11s = np.array(min_s11_list)
-
-    # Sort
-    sort_idx = np.argsort(values)
-    values = values[sort_idx]
-    res_freqs = res_freqs[sort_idx]
-    min_s11s = min_s11s[sort_idx]
-
-    # Fit cubic to resonance depth
-    X = values.reshape(-1, 1)
-    poly = PolynomialFeatures(3)
-    X_poly = poly.fit_transform(X)
-    depth_model = LinearRegression().fit(X_poly, min_s11s)
-    depth_r2 = depth_model.score(X_poly, min_s11s)
-    coefs = depth_model.coef_
-    intercept = depth_model.intercept_
-
-    st.subheader(f"Cubic Equation – Resonance Depth vs {unit_label} (80–100 MHz)")
-    eq_text = (f"S11_min = {intercept:.4f} + ({coefs[1]:.6f})*x + "
-               f"({coefs[2]:.6e})*x² + ({coefs[3]:.6e})*x³")
-    st.code(eq_text, language="text")
-    st.write(f"**R² = {depth_r2:.4f}**  |  Range: {values.min():.1f} – {values.max():.1f} {unit_label}")
-
-    # Side-by-side plots
-    st.subheader(f"Dependence on {unit_label} (80–100 MHz window)")
-    fig2, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-    x_smooth = np.linspace(values.min(), values.max(), 300).reshape(-1, 1)
-
-    # Frequency plot
-    axes[0].scatter(values, res_freqs, color='steelblue', s=40, zorder=3)
-    axes[0].set_xlabel(x_axis_label)
-    axes[0].set_ylabel("Resonant Frequency (MHz)")
-    axes[0].set_title(f"Resonant Frequency vs {unit_label}")
-    axes[0].grid(True, alpha=0.3)
-
-    # Depth plot + fit
-    axes[1].scatter(values, min_s11s, color='darkorange', s=40, label='Data', zorder=3)
-    axes[1].plot(x_smooth, depth_model.predict(poly.transform(x_smooth)),
-                 color='black', linewidth=2, label=f'Cubic fit (R²={depth_r2:.3f})')
-    axes[1].set_xlabel(x_axis_label)
-    axes[1].set_ylabel("Minimum S11 (dB)")
-    axes[1].set_title(f"Resonance Depth vs {unit_label}")
-    axes[1].legend()
-    axes[1].grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    st.pyplot(fig2)
-
-    # Download button
-    buf = BytesIO()
-    fig2.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-    st.download_button(
-        label="Download analysis plots as PNG",
-        data=buf.getvalue(),
-        file_name="sansEC_analysis.png",
-        mime="image/png"
-    )
-else:
-    st.info("Not enough valid files in the 80–100 MHz window to perform analysis.")
