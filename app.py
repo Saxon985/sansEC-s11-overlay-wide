@@ -25,22 +25,34 @@ DATA_DIR = "SansEC Data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # -------------------------------------------------
-# Helper: extract value and category (Temp vs Humidity)
+# Helper: extract value and category based on folder name
 # -------------------------------------------------
 def extract_value_and_category(file_path):
-    path_str = str(file_path).lower()
+    path_str = str(file_path)
+    path_lower = path_str.lower()
     name = os.path.basename(file_path)
     
-    # Check if humidity based on folder name or filename
-    is_humidity = "hum" in path_str or "%" in path_str
+    # Determine category based on folder title ("Temp Test" vs "Hum Test")
+    if "temp test" in path_lower:
+        category = "Temperature"
+        unit_label = "Temperature (°C)"
+    elif "hum test" in path_lower:
+        category = "Humidity"
+        unit_label = "Humidity (%)"
+    else:
+        # Fallback heuristic if folder name doesn't match exactly
+        if "hum" in path_lower or "%" in path_lower:
+            category = "Humidity"
+            unit_label = "Humidity (%)"
+        else:
+            category = "Temperature"
+            unit_label = "Temperature (°C)"
     
+    # Extract numeric value from the filename
     match = re.search(r"([-+]?\d*\.?\d+)", name)
     val = float(match.group(1)) if match else 0.0
     
-    if is_humidity:
-        return val, "Humidity (%)", "Humidity"
-    else:
-        return val, "Temperature (°C)", "Temperature"
+    return val, unit_label, category
 
 # -------------------------------------------------
 # File / ZIP Uploader
@@ -78,7 +90,7 @@ if len(all_files) == 0:
     st.info("No .s1p files found yet. Upload your data folders or a .zip archive to get started.")
     st.stop()
 
-# Split into temperature and humidity file lists
+# Split into temperature and humidity file lists based on folder classification
 temp_files = [f for f in all_files if extract_value_and_category(f)[2] == "Temperature"]
 hum_files = [f for f in all_files if extract_value_and_category(f)[2] == "Humidity"]
 
@@ -163,6 +175,17 @@ if len(temp_files) > 0:
     ax_t.grid(True, alpha=0.3)
     st.pyplot(fig_t)
 
+    # Download button for Temperature Overlay Plot
+    buf_t = BytesIO()
+    fig_t.savefig(buf_t, format="png", dpi=150, bbox_inches="tight")
+    st.download_button(
+        label="Download Temperature Overlay Plot as PNG",
+        data=buf_t.getvalue(),
+        file_name="temperature_s11_overlay.png",
+        mime="image/png",
+        key="download_temp_overlay"
+    )
+
 # =================================================
 # HUMIDITY SECTION
 # =================================================
@@ -194,6 +217,17 @@ if len(hum_files) > 0:
     ax_h.set_title("S11 Magnitude vs Frequency (Colored by Humidity)")
     ax_h.grid(True, alpha=0.3)
     st.pyplot(fig_h)
+
+    # Download button for Humidity Overlay Plot
+    buf_h = BytesIO()
+    fig_h.savefig(buf_h, format="png", dpi=150, bbox_inches="tight")
+    st.download_button(
+        label="Download Humidity Overlay Plot as PNG",
+        data=buf_h.getvalue(),
+        file_name="humidity_s11_overlay.png",
+        mime="image/png",
+        key="download_hum_overlay"
+    )
 
 # -------------------------------------------------
 # Delete Files Section
