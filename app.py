@@ -180,6 +180,65 @@ if len(temp_files) > 0:
         key="download_temp_overlay"
     )
 
+    # Temperature Analysis Plots (Resonant Freq & Min S11 vs Temp)
+    if len(t_vals) > 2:
+        tv = np.array(t_vals)
+        tf = np.array(t_freqs)
+        ts = np.array(t_s11s)
+
+        sort_idx = np.argsort(tv)
+        tv, tf, ts = tv[sort_idx], tf[sort_idx], ts[sort_idx]
+
+        deg = min(3, len(tv) - 1)
+        X = tv.reshape(-1, 1)
+        poly = PolynomialFeatures(deg)
+        X_poly = poly.fit_transform(X)
+        depth_model = LinearRegression().fit(X_poly, ts)
+        depth_r2 = depth_model.score(X_poly, ts)
+        coefs = depth_model.coef_
+        intercept = depth_model.intercept_
+
+        st.subheader("Cubic Equation – Resonance Depth vs Temperature (80–100 MHz)")
+        if len(coefs) > 3:
+            eq_text = (f"S11_min = {intercept:.4f} + ({coefs[1]:.6f})*x + "
+                       f"({coefs[2]:.6e})*x² + ({coefs[3]:.6e})*x³")
+        else:
+            eq_text = f"S11_min = {intercept:.4f} + " + " + ".join([f"({coefs[i]:.6e})*x^{i}" for i in range(1, len(coefs))])
+        st.code(eq_text, language="text")
+        st.write(f"**R² = {depth_r2:.4f}**  |  Range: {tv.min():.1f} – {tv.max():.1f} °C")
+
+        st.subheader("Dependence on Temperature (80–100 MHz window)")
+        fig_t_ana, axes_t = plt.subplots(1, 2, figsize=(14, 5))
+        x_smooth_t = np.linspace(tv.min(), tv.max(), 300).reshape(-1, 1)
+
+        axes_t[0].scatter(tv, tf, color='steelblue', s=40, zorder=3)
+        axes_t[0].set_xlabel("Temperature (°C)")
+        axes_t[0].set_ylabel("Resonant Frequency (MHz)")
+        axes_t[0].set_title("Resonant Frequency vs Temperature")
+        axes_t[0].grid(True, alpha=0.3)
+
+        axes_t[1].scatter(tv, ts, color='darkorange', s=40, label='Data', zorder=3)
+        axes_t[1].plot(x_smooth_t, depth_model.predict(poly.transform(x_smooth_t)),
+                       color='black', linewidth=2, label=f'Fit (R²={depth_r2:.3f})')
+        axes_t[1].set_xlabel("Temperature (°C)")
+        axes_t[1].set_ylabel("Minimum S11 (dB)")
+        axes_t[1].set_title("Resonance Depth vs Temperature")
+        axes_t[1].legend()
+        axes_t[1].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        st.pyplot(fig_t_ana)
+
+        buf_t_ana = BytesIO()
+        fig_t_ana.savefig(buf_t_ana, format="png", dpi=150, bbox_inches="tight")
+        st.download_button(
+            label="Download Temperature Analysis Plots as PNG",
+            data=buf_t_ana.getvalue(),
+            file_name="temperature_analysis.png",
+            mime="image/png",
+            key="download_temp_analysis"
+        )
+
 # =================================================
 # HUMIDITY SECTION
 # =================================================
@@ -222,6 +281,65 @@ if len(hum_files) > 0:
         mime="image/png",
         key="download_hum_overlay"
     )
+
+    # Humidity Analysis Plots (Resonant Freq & Min S11 vs Humidity)
+    if len(h_vals) > 2:
+        hv = np.array(h_vals)
+        hf = np.array(h_freqs)
+        hs = np.array(h_s11s)
+
+        sort_idx = np.argsort(hv)
+        hv, hf, hs = hv[sort_idx], hf[sort_idx], hs[sort_idx]
+
+        deg = min(3, len(hv) - 1)
+        X = hv.reshape(-1, 1)
+        poly = PolynomialFeatures(deg)
+        X_poly = poly.fit_transform(X)
+        depth_model_h = LinearRegression().fit(X_poly, hs)
+        depth_r2_h = depth_model_h.score(X_poly, hs)
+        coefs_h = depth_model_h.coef_
+        intercept_h = depth_model_h.intercept_
+
+        st.subheader("Cubic Equation – Resonance Depth vs Humidity (80–100 MHz)")
+        if len(coefs_h) > 3:
+            eq_text_h = (f"S11_min = {intercept_h:.4f} + ({coefs_h[1]:.6f})*x + "
+                         f"({coefs_h[2]:.6e})*x² + ({coefs_h[3]:.6e})*x³")
+        else:
+            eq_text_h = f"S11_min = {intercept_h:.4f} + " + " + ".join([f"({coefs_h[i]:.6e})*x^{i}" for i in range(1, len(coefs_h))])
+        st.code(eq_text_h, language="text")
+        st.write(f"**R² = {depth_r2_h:.4f}**  |  Range: {hv.min():.1f} – {hv.max():.1f} %")
+
+        st.subheader("Dependence on Humidity (80–100 MHz window)")
+        fig_h_ana, axes_h = plt.subplots(1, 2, figsize=(14, 5))
+        x_smooth_h = np.linspace(hv.min(), hv.max(), 300).reshape(-1, 1)
+
+        axes_h[0].scatter(hv, hf, color='teal', s=40, zorder=3)
+        axes_h[0].set_xlabel("Humidity (%)")
+        axes_h[0].set_ylabel("Resonant Frequency (MHz)")
+        axes_h[0].set_title("Resonant Frequency vs Humidity")
+        axes_h[0].grid(True, alpha=0.3)
+
+        axes_h[1].scatter(hv, hs, color='purple', s=40, label='Data', zorder=3)
+        axes_h[1].plot(x_smooth_h, depth_model_h.predict(poly.transform(x_smooth_h)),
+                       color='black', linewidth=2, label=f'Fit (R²={depth_r2_h:.3f})')
+        axes_h[1].set_xlabel("Humidity (%)")
+        axes_h[1].set_ylabel("Minimum S11 (dB)")
+        axes_h[1].set_title("Resonance Depth vs Humidity")
+        axes_h[1].legend()
+        axes_h[1].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        st.pyplot(fig_h_ana)
+
+        buf_h_ana = BytesIO()
+        fig_h_ana.savefig(buf_h_ana, format="png", dpi=150, bbox_inches="tight")
+        st.download_button(
+            label="Download Humidity Analysis Plots as PNG",
+            data=buf_h_ana.getvalue(),
+            file_name="humidity_analysis.png",
+            mime="image/png",
+            key="download_hum_analysis"
+        )
 
 # -------------------------------------------------
 # Delete Files Section
