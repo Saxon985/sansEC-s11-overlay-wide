@@ -145,7 +145,6 @@ if len(temp_files) > 0:
     df_temp, t_vals, t_freqs, t_s11s = process_dataset(temp_files, "Temperature (°C)")
     st.dataframe(df_temp, use_container_width=True)
 
-    # Plot 1: Temperature S11 Overlay (Plasma Colormap)
     st.subheader("S11 Magnitude vs Frequency Overlay (Temperature)")
     fig_t, ax_t = plt.subplots(figsize=(12, 6))
     t_colors = [extract_value_and_category(f)[0] for f in temp_files]
@@ -169,7 +168,6 @@ if len(temp_files) > 0:
     ax_t.grid(True, alpha=0.3)
     st.pyplot(fig_t)
 
-    # Download button for Temperature Overlay Plot
     buf_t = BytesIO()
     fig_t.savefig(buf_t, format="png", dpi=150, bbox_inches="tight")
     st.download_button(
@@ -180,7 +178,6 @@ if len(temp_files) > 0:
         key="download_temp_overlay"
     )
 
-    # Temperature Analysis Plots (Resonant Freq & Min S11 vs Temp)
     if len(t_vals) > 2:
         tv = np.array(t_vals)
         tf = np.array(t_freqs)
@@ -247,7 +244,18 @@ if len(hum_files) > 0:
     df_hum, h_vals, h_freqs, h_s11s = process_dataset(hum_files, "Humidity (%)")
     st.dataframe(df_hum, use_container_width=True)
 
-    # Plot 2: Humidity S11 Overlay (Viridis Colormap)
+    # Highlight the absolute deepest S11 dip for Humidity
+    if len(h_s11s) > 0:
+        deepest_idx = np.argmin(h_s11s)
+        deepest_hum = h_vals[deepest_idx]
+        deepest_freq = h_freqs[deepest_idx]
+        deepest_s11 = h_s11s[deepest_idx]
+        st.success(
+            f"🎯 **Deepest Humidity S11 Dip Detected:** "
+            f"**{deepest_s11:.2f} dB** occurs at **{deepest_freq:.4f} MHz** "
+            f"under a humidity level of **{deepest_hum}%**."
+        )
+
     st.subheader("S11 Magnitude vs Frequency Overlay (Humidity)")
     fig_h, ax_h = plt.subplots(figsize=(12, 6))
     h_colors = [extract_value_and_category(f)[0] for f in hum_files]
@@ -271,7 +279,6 @@ if len(hum_files) > 0:
     ax_h.grid(True, alpha=0.3)
     st.pyplot(fig_h)
 
-    # Download button for Humidity Overlay Plot
     buf_h = BytesIO()
     fig_h.savefig(buf_h, format="png", dpi=150, bbox_inches="tight")
     st.download_button(
@@ -282,7 +289,6 @@ if len(hum_files) > 0:
         key="download_hum_overlay"
     )
 
-    # Humidity Analysis Plots (Resonant Freq & Min S11 vs Humidity)
     if len(h_vals) > 2:
         hv = np.array(h_vals)
         hf = np.array(h_freqs)
