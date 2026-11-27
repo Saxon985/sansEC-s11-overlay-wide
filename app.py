@@ -26,7 +26,7 @@ freq_range = st.sidebar.slider(
     "Select Frequency Analysis Window (MHz)",
     min_value=20.0,
     max_value=200.0,
-    value=(80.0, 100.0),  # Default window
+    value=(60.0, 120.0),  # Expanded default window
     step=1.0
 )
 FREQ_MIN, FREQ_MAX = freq_range[0] * 1e6, freq_range[1] * 1e6
@@ -102,7 +102,7 @@ temp_files = [f for f in all_files if extract_value_and_category(f)[2] == "Tempe
 hum_files = [f for f in all_files if extract_value_and_category(f)[2] == "Humidity"]
 
 # -------------------------------------------------
-# Process Dataset Function (Respects dynamic FREQ_MIN/FREQ_MAX)
+# Process Dataset Function (Includes -20dB Window Calculation)
 # -------------------------------------------------
 def process_dataset(file_list, unit_label):
     file_info = []
@@ -125,14 +125,27 @@ def process_dataset(file_list, unit_label):
                 min_idx = np.argmin(s11_win)
                 res_freq = freq[mask][min_idx] / 1e6
                 min_s11 = s11_win[min_idx]
+
+                # Calculate frequency window where S11 <= -20 dB
+                below_20 = s11_win <= -20.0
+                if np.any(below_20):
+                    f_sub = freq[mask] / 1e6
+                    valid_freqs = f_sub[below_20]
+                    window_start = round(valid_freqs[0], 4)
+                    window_end = round(valid_freqs[-1], 4)
+                    bw_20db = round(window_end - window_start, 4)
+                    window_str = f"{window_start} – {window_end} MHz ({bw_20db} MHz span)"
+                else:
+                    window_str = "None (>-20 dB)"
             else:
-                res_freq, min_s11 = None, None
+                res_freq, min_s11, window_str = None, None, "N/A"
 
             file_info.append({
                 "File Path": rel_path,
                 unit_label: val,
                 "Resonant Freq (MHz)": round(res_freq, 4) if res_freq is not None else "N/A",
-                "Min S11 (dB)": round(min_s11, 3) if min_s11 is not None else "N/A"
+                "Min S11 (dB)": round(min_s11, 3) if min_s11 is not None else "N/A",
+                "-20 dB Freq Window": window_str
             })
 
             if res_freq is not None:
@@ -144,7 +157,8 @@ def process_dataset(file_list, unit_label):
                 "File Path": rel_path,
                 unit_label: val,
                 "Resonant Freq (MHz)": "Error",
-                "Min S11 (dB)": "Error"
+                "Min S11 (dB)": "Error",
+                "-20 dB Freq Window": "Error"
             })
     return pd.DataFrame(file_info), values_list, res_freqs_list, min_s11_list
 
@@ -174,9 +188,11 @@ if len(temp_files) > 0:
     cbar_t.set_label("Temperature (°C)")
 
     ax_t.set_xlim(freq_range[0], freq_range[1])
+    ax_t.axhline(-20, color='red', linestyle='--', linewidth=1, alpha=0.7, label='-20 dB Threshold')
     ax_t.set_xlabel("Frequency (MHz)")
     ax_t.set_ylabel("S11 Magnitude (dB)")
     ax_t.set_title("S11 Magnitude vs Frequency (Colored by Temperature)")
+    ax_t.legend(loc='upper right')
     ax_t.grid(True, alpha=0.3)
     st.pyplot(fig_t)
 
@@ -285,9 +301,11 @@ if len(hum_files) > 0:
     cbar_h.set_label("Humidity (%)")
 
     ax_h.set_xlim(freq_range[0], freq_range[1])
+    ax_h.axhline(-20, color='red', linestyle='--', linewidth=1, alpha=0.7, label='-20 dB Threshold')
     ax_h.set_xlabel("Frequency (MHz)")
     ax_h.set_ylabel("S11 Magnitude (dB)")
     ax_h.set_title("S11 Magnitude vs Frequency (Colored by Humidity)")
+    ax_h.legend(loc='upper right')
     ax_h.grid(True, alpha=0.3)
     st.pyplot(fig_h)
 
