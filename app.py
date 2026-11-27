@@ -19,6 +19,19 @@ st.set_page_config(page_title="SansEC S11 Overlay", layout="wide")
 st.title("SansEC S11 Overlay (Temperature & Humidity Analysis)")
 
 # -------------------------------------------------
+# Sidebar: Analysis Frequency Window Controls
+# -------------------------------------------------
+st.sidebar.header("Analysis Settings")
+freq_range = st.sidebar.slider(
+    "Select Frequency Analysis Window (MHz)",
+    min_value=20.0,
+    max_value=200.0,
+    value=(80.0, 100.0),  # Default window
+    step=1.0
+)
+FREQ_MIN, FREQ_MAX = freq_range[0] * 1e6, freq_range[1] * 1e6
+
+# -------------------------------------------------
 # Data folder
 # -------------------------------------------------
 DATA_DIR = "SansEC Data"   
@@ -88,10 +101,8 @@ if len(all_files) == 0:
 temp_files = [f for f in all_files if extract_value_and_category(f)[2] == "Temperature"]
 hum_files = [f for f in all_files if extract_value_and_category(f)[2] == "Humidity"]
 
-FREQ_MIN, FREQ_MAX = 80e6, 100e6
-
 # -------------------------------------------------
-# Process Dataset Function
+# Process Dataset Function (Respects dynamic FREQ_MIN/FREQ_MAX)
 # -------------------------------------------------
 def process_dataset(file_list, unit_label):
     file_info = []
@@ -145,7 +156,7 @@ if len(temp_files) > 0:
     df_temp, t_vals, t_freqs, t_s11s = process_dataset(temp_files, "Temperature (°C)")
     st.dataframe(df_temp, use_container_width=True)
 
-    st.subheader("S11 Magnitude vs Frequency Overlay (Temperature)")
+    st.subheader(f"S11 Magnitude vs Frequency Overlay (Temperature) [{freq_range[0]} – {freq_range[1]} MHz]")
     fig_t, ax_t = plt.subplots(figsize=(12, 6))
     t_colors = [extract_value_and_category(f)[0] for f in temp_files]
     cmap_t = plt.cm.plasma
@@ -162,6 +173,7 @@ if len(temp_files) > 0:
     cbar_t = plt.colorbar(sm_t, ax=ax_t)
     cbar_t.set_label("Temperature (°C)")
 
+    ax_t.set_xlim(freq_range[0], freq_range[1])
     ax_t.set_xlabel("Frequency (MHz)")
     ax_t.set_ylabel("S11 Magnitude (dB)")
     ax_t.set_title("S11 Magnitude vs Frequency (Colored by Temperature)")
@@ -195,7 +207,7 @@ if len(temp_files) > 0:
         coefs = depth_model.coef_
         intercept = depth_model.intercept_
 
-        st.subheader("Cubic Equation – Resonance Depth vs Temperature (80–100 MHz)")
+        st.subheader(f"Cubic Equation – Resonance Depth vs Temperature ({freq_range[0]}–{freq_range[1]} MHz)")
         if len(coefs) > 3:
             eq_text = (f"S11_min = {intercept:.4f} + ({coefs[1]:.6f})*x + "
                        f"({coefs[2]:.6e})*x² + ({coefs[3]:.6e})*x³")
@@ -204,7 +216,7 @@ if len(temp_files) > 0:
         st.code(eq_text, language="text")
         st.write(f"**R² = {depth_r2:.4f}**  |  Range: {tv.min():.1f} – {tv.max():.1f} °C")
 
-        st.subheader("Dependence on Temperature (80–100 MHz window)")
+        st.subheader("Dependence on Temperature")
         fig_t_ana, axes_t = plt.subplots(1, 2, figsize=(14, 5))
         x_smooth_t = np.linspace(tv.min(), tv.max(), 300).reshape(-1, 1)
 
@@ -244,7 +256,6 @@ if len(hum_files) > 0:
     df_hum, h_vals, h_freqs, h_s11s = process_dataset(hum_files, "Humidity (%)")
     st.dataframe(df_hum, use_container_width=True)
 
-    # Highlight the absolute deepest S11 dip for Humidity
     if len(h_s11s) > 0:
         deepest_idx = np.argmin(h_s11s)
         deepest_hum = h_vals[deepest_idx]
@@ -256,7 +267,7 @@ if len(hum_files) > 0:
             f"under a humidity level of **{deepest_hum}%**."
         )
 
-    st.subheader("S11 Magnitude vs Frequency Overlay (Humidity)")
+    st.subheader(f"S11 Magnitude vs Frequency Overlay (Humidity) [{freq_range[0]} – {freq_range[1]} MHz]")
     fig_h, ax_h = plt.subplots(figsize=(12, 6))
     h_colors = [extract_value_and_category(f)[0] for f in hum_files]
     cmap_h = plt.cm.viridis
@@ -273,6 +284,7 @@ if len(hum_files) > 0:
     cbar_h = plt.colorbar(sm_h, ax=ax_h)
     cbar_h.set_label("Humidity (%)")
 
+    ax_h.set_xlim(freq_range[0], freq_range[1])
     ax_h.set_xlabel("Frequency (MHz)")
     ax_h.set_ylabel("S11 Magnitude (dB)")
     ax_h.set_title("S11 Magnitude vs Frequency (Colored by Humidity)")
@@ -306,7 +318,7 @@ if len(hum_files) > 0:
         coefs_h = depth_model_h.coef_
         intercept_h = depth_model_h.intercept_
 
-        st.subheader("Cubic Equation – Resonance Depth vs Humidity (80–100 MHz)")
+        st.subheader(f"Cubic Equation – Resonance Depth vs Humidity ({freq_range[0]}–{freq_range[1]} MHz)")
         if len(coefs_h) > 3:
             eq_text_h = (f"S11_min = {intercept_h:.4f} + ({coefs_h[1]:.6f})*x + "
                          f"({coefs_h[2]:.6e})*x² + ({coefs_h[3]:.6e})*x³")
@@ -315,7 +327,7 @@ if len(hum_files) > 0:
         st.code(eq_text_h, language="text")
         st.write(f"**R² = {depth_r2_h:.4f}**  |  Range: {hv.min():.1f} – {hv.max():.1f} %")
 
-        st.subheader("Dependence on Humidity (80–100 MHz window)")
+        st.subheader("Dependence on Humidity")
         fig_h_ana, axes_h = plt.subplots(1, 2, figsize=(14, 5))
         x_smooth_h = np.linspace(hv.min(), hv.max(), 300).reshape(-1, 1)
 
