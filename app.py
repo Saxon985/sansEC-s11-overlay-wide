@@ -25,34 +25,28 @@ DATA_DIR = "SansEC Data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # -------------------------------------------------
-# Helper: extract value and category based on folder name
+# Helper: extract value and category based on filename
 # -------------------------------------------------
 def extract_value_and_category(file_path):
-    path_str = str(file_path)
-    path_lower = path_str.lower()
     name = os.path.basename(file_path)
+    name_lower = name.lower()
     
-    # Determine category based on folder title ("Temp Test" vs "Hum Test")
-    if "temp test" in path_lower:
-        category = "Temperature"
-        unit_label = "Temperature (°C)"
-    elif "hum test" in path_lower:
-        category = "Humidity"
-        unit_label = "Humidity (%)"
-    else:
-        # Fallback heuristic if folder name doesn't match exactly
-        if "hum" in path_lower or "%" in path_lower:
-            category = "Humidity"
-            unit_label = "Humidity (%)"
-        else:
-            category = "Temperature"
-            unit_label = "Temperature (°C)"
+    # Check if humidity (% in filename)
+    if "%" in name:
+        match = re.search(r"([-+]?\d*\.?\d+)\s*%", name)
+        val = float(match.group(1)) if match else 0.0
+        return val, "Humidity (%)", "Humidity"
     
-    # Extract numeric value from the filename
+    # Check if temperature (C in filename)
+    elif "c" in name_lower:
+        match = re.search(r"([-+]?\d*\.?\d+)\s*c", name_lower)
+        val = float(match.group(1)) if match else 0.0
+        return val, "Temperature (°C)", "Temperature"
+    
+    # Fallback default if neither indicator is found
     match = re.search(r"([-+]?\d*\.?\d+)", name)
     val = float(match.group(1)) if match else 0.0
-    
-    return val, unit_label, category
+    return val, "Temperature (°C)", "Temperature"
 
 # -------------------------------------------------
 # File / ZIP Uploader
@@ -90,7 +84,7 @@ if len(all_files) == 0:
     st.info("No .s1p files found yet. Upload your data folders or a .zip archive to get started.")
     st.stop()
 
-# Split into temperature and humidity file lists based on folder classification
+# Split into temperature and humidity file lists based on filename rules
 temp_files = [f for f in all_files if extract_value_and_category(f)[2] == "Temperature"]
 hum_files = [f for f in all_files if extract_value_and_category(f)[2] == "Humidity"]
 
